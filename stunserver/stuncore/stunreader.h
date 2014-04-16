@@ -63,6 +63,8 @@ private:
     StunMessageClass _msgClass;
     uint16_t _msgLength;
 
+    NatConnectReq _msgNatConnectReq;
+
     HRESULT ReadHeader();
     HRESULT ReadBody();
 
@@ -115,6 +117,8 @@ public:
     
 
     CDataStream& GetStream();
+    NatConnectReq GetNATConnectReq();
+    
 
 };
 

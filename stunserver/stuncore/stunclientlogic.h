@@ -127,10 +127,11 @@ public:
     HRESULT Initialize(StunClientLogicConfig& config);
     
     HRESULT GetNextMessage(CRefCountedBuffer& spMsg, CSocketAddress* pAddrDest, uint32_t timeCurrentMilliseconds);
-    
+    HRESULT GetNextMessageEx(CRefCountedBuffer& spMsg, CSocketAddress* pAddrDest, uint32_t timeCurrentMilliseconds);
     HRESULT ProcessResponse(CRefCountedBuffer& spMsg, CSocketAddress& addrRemote, CSocketAddress& addrLocal);
     
     HRESULT GetResults(StunClientResults* pResults);
+    HRESULT ProcessMsg(CRefCountedBuffer& spMsg, CSocketAddress& addrRemote, CSocketAddress& addrLocal);
 };
 
 

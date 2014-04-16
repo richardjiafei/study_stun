@@ -365,7 +365,6 @@ HRESULT CStunSocketThread::ProcessRequestAndSendResponse()
     ChkIf(_reader.GetState() != CStunMessageReader::BodyValidated, E_FAIL);
     
     // msgIn and msgOut are already initialized
-    
     Chk(CStunRequestHandler::ProcessRequest(_msgIn, _msgOut, &_tsa, _spAuth));
 
     ASSERT(_tsa.set[_msgOut.socketrole].fValid);

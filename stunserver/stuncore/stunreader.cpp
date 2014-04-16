@@ -812,3 +812,9 @@ CDataStream& CStunMessageReader::GetStream()
     return _stream;
 }
 
+NatConnectReq CStunMessageReader::GetNATConnectReq()
+{
+    return _msgNatConnectReq;
+}
+
+

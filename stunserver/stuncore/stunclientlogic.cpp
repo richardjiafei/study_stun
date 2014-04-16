@@ -215,7 +215,85 @@ HRESULT CStunClientLogic::GetNextMessage(CRefCountedBuffer& spMsg, CSocketAddres
 Cleanup:
     return hr;
 }
+HRESULT CStunClientLogic::GetNextMessageEx(CRefCountedBuffer& spMsg, CSocketAddress* pAddrDest, uint32_t timeCurrentMilliseconds)
+{
+    HRESULT hr = S_OK;
+    uint32_t diff = 0;
+    IStunClientTest* pCurrentTest = NULL;
+    bool fReadyToReturn = false;
 
+    ChkIfA(_fInitialized == false, E_FAIL);
+    ChkIfA(spMsg->GetAllocatedSize() == 0, E_INVALIDARG);
+    ChkIfA(pAddrDest == NULL, E_INVALIDARG);
+
+    // clients should pass in the expected size
+    ChkIfA(spMsg->GetAllocatedSize() < MAX_STUN_MESSAGE_SIZE, E_INVALIDARG);
+
+
+    while (fReadyToReturn==false)
+    {
+        if (_nTestIndex >= _testlist.size())
+        {
+            hr = E_STUNCLIENT_RESULTS_READY; // no more tests to run
+            break;
+        }
+
+        pCurrentTest = _testlist[_nTestIndex];
+
+        if (_fPreCheckRunOnTest==false)
+        {
+            // give the test an early chance to complete before sending a message (based on results of previous test)
+            pCurrentTest->PreRunCheck();
+            _fPreCheckRunOnTest = true;
+        }
+
+
+        // has this test completed or is it in a state in which it can't run?
+        if (pCurrentTest->IsCompleted() || pCurrentTest->IsReadyToRun()==false)
+        {
+            // increment to the next test
+            _nTestIndex++;
+            _sendCount = 0;
+            _fPreCheckRunOnTest = false;
+
+            continue;
+        }
+
+        // Have we waited long enough for a response
+        diff = (timeCurrentMilliseconds - _timeLastMessageSent) / 1000; // convert from milliseconds to seconds
+        if ((diff < _config.timeoutSeconds) && (_sendCount != 0))
+        {
+            hr = E_STUNCLIENT_STILL_WAITING;
+            break;
+        }
+
+        // have we exceeded the retry count
+        if (_sendCount >= _config.uMaxAttempts)
+        {
+            // notify the test that it has timed out
+            // this should put it in the completed state (and we increment to next test on next loop)
+            pCurrentTest->NotifyTimeout();
+            ASSERT(pCurrentTest->IsCompleted());
+            continue;
+        }
+
+        // ok - we are ready to go fetch a message
+        hr = pCurrentTest->GetMessage(spMsg, pAddrDest);
+        ASSERT(SUCCEEDED(hr));
+        if (FAILED(hr))
+        {
+            break;
+        }
+
+        // success
+        _sendCount++;
+        _timeLastMessageSent = timeCurrentMilliseconds;
+        fReadyToReturn = true;
+        hr = S_OK;
+    }
+Cleanup:
+    return hr;
+}
 HRESULT CStunClientLogic::ProcessResponse(CRefCountedBuffer& spMsg, CSocketAddress& addrRemote, CSocketAddress& addrLocal)
 {
     HRESULT hr = S_OK;
@@ -237,7 +315,27 @@ HRESULT CStunClientLogic::ProcessResponse(CRefCountedBuffer& spMsg, CSocketAddre
 Cleanup:
     return hr;
 }
+HRESULT CStunClientLogic::ProcessMsg(CRefCountedBuffer& spMsg, CSocketAddress& addrRemote, CSocketAddress& addrLocal)
+{
+    HRESULT hr = S_OK;
+    IStunClientTest* pCurrentTest = NULL;
 
+    ChkIfA(_fInitialized == false, E_FAIL);
+    ChkIfA(spMsg->GetSize() == 0, E_INVALIDARG);
+    //ChkIf (_nTestIndex >= _testlist.size(), E_UNEXPECTED);
+
+    //pCurrentTest = _testlist[_nTestIndex];
+
+    // passing a response to a test that is already completed ??
+    //ChkIfA(pCurrentTest->IsCompleted(), E_UNEXPECTED);
+
+    hr = pCurrentTest->ProcessResponse(spMsg, addrRemote, addrLocal);
+    // this likely puts the test into the completed state
+    // A subsequent call to GetNextMessage will invoke the next tset
+
+Cleanup:
+    return hr;
+}
 HRESULT CStunClientLogic::GetResults(StunClientResults* pResults)
 {
     HRESULT hr=S_OK;

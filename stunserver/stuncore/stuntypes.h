@@ -102,6 +102,9 @@ enum StunMessageClass
 enum StunMessageType
 {
     StunMsgTypeBinding = 0x0001,
+    NATConnectReq = 0x4100,
+    NATConnectResp = 0x411,
+    MakeHoleReq = 0x412,
     StunMsgTypeInvalid = 0xffff
 };
 
@@ -133,6 +136,31 @@ struct StunChangeRequestAttribute
     bool fChangeIP;
     bool fChangePort;
 };
+
+
+
+/*add by tpj begin */
+
+enum ConnectType
+{
+    eConnectTypeClient,
+    eConnectTypeServer
+};
+
+struct NatConnectReq
+{
+    uint32_t clientId;
+    uint32_t channelId;
+    ConnectType connectType;
+    NatBehavior behavior;
+    NatFiltering filtering;
+}
+
+
+
+
+
+/*add by tpj end */
 
 
 const uint16_t STUN_ATTRIBUTE_MAPPEDADDRESS_SIZE_IPV4 = 8;

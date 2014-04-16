@@ -488,6 +488,7 @@ HRESULT UdpClientLoop(StunClientLogicConfig& config, const ClientSocketConfig& s
     StunClientResults results;
 
     CStunClientLogic clientlogic;
+    int afterTest = false;
 
 
     hr = clientlogic.Initialize(config);
@@ -516,7 +517,15 @@ HRESULT UdpClientLoop(StunClientLogicConfig& config, const ClientSocketConfig& s
     {
         HRESULT hrRet;
         spMsg->SetSize(0);
-        hrRet = clientlogic.GetNextMessage(spMsg, &addrDest, GetMillisecondCounter());
+
+        if(false == afterTest)
+        {
+          hrRet = clientlogic.GetNextMessage(spMsg, &addrDest, GetMillisecondCounter());
+        }
+        else
+        {
+          hrRet = clientlogic.GetNextMessageEx(spMsg, &addrDest, GetMillisecondCounter());
+        }
 
         if (SUCCEEDED(hrRet))
         {
@@ -544,7 +553,13 @@ HRESULT UdpClientLoop(StunClientLogicConfig& config, const ClientSocketConfig& s
         }
         else if (hrRet == E_STUNCLIENT_RESULTS_READY)
         {
-            break;
+            results.Init();
+            clientlogic.GetResults(&results);
+            DumpResults(config, results);
+            Logging::LogMsg(LL_DEBUG, " the Test Result E_STUNCLIENT_RESULTS_READY");
+            afterTest = true;
+            continue;
+            //break;
         }
         else
         {
@@ -576,11 +591,10 @@ HRESULT UdpClientLoop(StunClientLogicConfig& config, const ClientSocketConfig& s
     }
 
 
-    results.Init();
-    clientlogic.GetResults(&results);
+    //results.Init();
+    //clientlogic.GetResults(&results);
 
-    DumpResults(config, results);
-
+    //DumpResults(config, results);
 
 Cleanup:
     return hr;
