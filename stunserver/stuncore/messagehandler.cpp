@@ -16,6 +16,10 @@
 
 
 #include "commonincludes.hpp"
+
+#include <stdint.h>
+#include "conndatastore.h"
+#include "commonincludes.hpp"
 #include "stuncore.h"
 #include "messagehandler.h"
 #include "socketrole.h"
@@ -42,8 +46,6 @@ HRESULT CStunRequestHandler::ProcessRequest(const StunMessageIn& msgIn, StunMess
     
     CStunRequestHandler handler;
 
-        // aliases
-    CStunMessageReader &reader = *(_pMsgIn->pReader);
     
     // parameter checking
     ChkIfA(msgIn.pReader==NULL, E_INVALIDARG);
@@ -71,7 +73,11 @@ HRESULT CStunRequestHandler::ProcessRequest(const StunMessageIn& msgIn, StunMess
     handler._pMsgOut->addrDest = handler._pMsgIn->addrRemote; // destination address is same as source
     
     // now call the function that does all the real work
-    switch(reader->GetMessageType())
+    // aliases
+    //CStunMessageReader &reader = *(handler._pMsgIn->pReader);
+
+
+    switch(handler._pMsgIn->pReader->GetMessageType())
     {
       case StunMsgTypeBinding:
       {
@@ -80,7 +86,7 @@ HRESULT CStunRequestHandler::ProcessRequest(const StunMessageIn& msgIn, StunMess
       }
       default:
       {
-        hr = handler.ProcessPrivateMsg();
+        hr = handler.ProcessPrivateMsg(handler._pMsgIn->pReader->GetMessageType());
         // print log for it.
         break;
       }
@@ -173,20 +179,21 @@ HRESULT CStunRequestHandler::ProcessRequestImpl()
 Cleanup:
     return hr;
 }
-HRESULT CStunRequestHandler::ProcessPrivateMsg(uint16_t messageType, CStunRequestHandler handler)
+HRESULT CStunRequestHandler::ProcessPrivateMsg(uint16_t messageType)
 {
+	HRESULT hr = S_OK;
     // now call the function that does all the real work
     switch(messageType)
     {
       case NATConnectReq:
       {
-        hr = handler.ProcessNATConnectReq();
+        hr = ProcessNATConnectReq();
         break;
       }
       
       case MakeHoleReq:
       {
-        hr = handler.ProcessRequestImpl();
+        hr = ProcessRequestImpl();
         break;
       }
 
@@ -197,7 +204,7 @@ HRESULT CStunRequestHandler::ProcessPrivateMsg(uint16_t messageType, CStunReques
       }
     }
     
-
+    return hr;
 }
 HRESULT CStunRequestHandler::ProcessNATConnectReq()
 {
@@ -218,20 +225,21 @@ HRESULT CStunRequestHandler::ProcessNATConnectReq()
     _error.msgclass = StunMsgClassFailureResponse;
     
 
-    NatConnectReq  *pNatConnectReq = &reader.GetNATConnectReq();
+    NatConnectReq  natConnectReq;
+    natConnectReq = reader.GetNATConnectReq();
 
     /*record the data*/
     /*alloc connectId*/
     uint32_t connectId;
-    if(eConnectTypeClient== pNatConnectReq->connectType)
+    if(eConnectTypeClient== natConnectReq.connectType)
     {
-      connectId = _connDataStore->AllocClientId();
-      _connDataStore->SetClientData(pNatConnectReq);
+      connectId = _connDataStore.AllocClientId();
+      _connDataStore.SetClientData(connectId,&natConnectReq);
     }
-    else if(eConnectTypeServer== pNatConnectReq->connectType)
+    else if(eConnectTypeServer== natConnectReq.connectType)
     {
-        connectId = _connDataStore->AllocServeId();
-        _connDataStore->SetServerData(pNatConnectReq);
+        connectId = _connDataStore.AllocServeId();
+        _connDataStore.SetServerData(connectId,&natConnectReq);
     }
 
     
@@ -282,168 +290,7 @@ void CStunRequestHandler::BuildErrorResponse()
     return;
 }
 
-HRESULT CStunRequestHandler::ProcessTestCompelteRequest()
-{
-    CStunMessageReader& reader = *(_pMsgIn->pReader);
-    
-    bool fRequestHasPaddingAttribute = false;
-    SocketRole socketOutput = _pMsgIn->socketrole; // initialize to be from the socket we received from
-    StunChangeRequestAttribute changerequest = {};
-    bool fSendOtherAddress = false;
-    bool fSendOriginAddress = false;
-    SocketRole socketOther;
-    CSocketAddress addrOrigin;
-    CSocketAddress addrOther;
-    CStunMessageBuilder builder;
-    uint16_t paddingSize = 0;
-    HRESULT hrResult;
 
-    
-    _pMsgOut->spBufferOut->SetSize(0);
-    builder.GetStream().Attach(_pMsgOut->spBufferOut, true);
-
-    // if the client request smells like RFC 3478, then send the resposne back in the same way
-    builder.SetLegacyMode(_fLegacyMode);
-
-    // check for an alternate response port
-    // check for padding attribute (todo - figure out how to inject padding into the response)
-    // check for a change request and validate we can do it. If so, set _socketOutput. If not, fill out _error and return.
-    // determine if we have an "other" address to notify the caller about
-
-
-    // did the request come with a padding request
-    if (SUCCEEDED(reader.GetPaddingAttributeSize(&paddingSize)))
-    {
-        // todo - figure out how we're going to get the MTU size of the outgoing interface
-        fRequestHasPaddingAttribute = true;
-    }
-    
-    // as per 5780, section 6.1, If the Request contained a PADDING attribute...
-    // "If the Request also contains the RESPONSE-PORT attribute the server MUST return an error response of type 400."
-    if (_fRequestHasResponsePort && fRequestHasPaddingAttribute)
-    {
-        _error.errorcode = STUN_ERROR_BADREQUEST;
-        return E_FAIL;
-    }
-    
-    // handle change request logic and figure out what "other-address" attribute is going to be
-    // Some clients (like jstun) will send a change-request attribute with neither the IP or PORT flag set
-    // So ignore this block of code in that case (because the fConnectionOriented check below could fail)
-    hrResult = reader.GetChangeRequest(&changerequest);
-    if (SUCCEEDED(hrResult) && (changerequest.fChangeIP || changerequest.fChangePort))
-    {
-        if (changerequest.fChangeIP)
-        {
-            socketOutput = SocketRoleSwapIP(socketOutput);
-        }
-        if(changerequest.fChangePort)
-        {
-            socketOutput = SocketRoleSwapPort(socketOutput);
-        }
-
-        // IsValidSocketRole just validates the enum, not whether or not we can send on it
-        ASSERT(IsValidSocketRole(socketOutput));
-
-        // now, make sure we have the ability to send from another socket
-        // For TCP/TLS, we can't send back from another port
-        if ((HasAddress(socketOutput) == false) || _pMsgIn->fConnectionOriented)
-        {
-            // send back an error. We're being asked to respond using another address that we don't have a socket for
-            _error.errorcode = STUN_ERROR_BADREQUEST;
-            return E_FAIL;
-        }
-    }    
-
-    // If we're only working one socket, then that's ok, we just don't send back an "other address" unless we have all four sockets configured
-    // now here's a problem. If we binded to "INADDR_ANY", all of the sockets will have "0.0.0.0" for an address (same for IPV6)
-    // So we effectively can't send back "other address" if don't really know our own IP address
-    // Fortunately, recvfromex and the ioctls on the socket allow address discovery a bit better
-    
-    // For TCP, we can send back an other-address.  But it is only meant as as
-    // a hint to the client that he can try another server to infer NAT behavior
-    // Change-requests are disallowed
-    
-    // Note - As per RFC 5780 and RFC 3489, "other address" (aka "changed address")
-    // attribute is always the ip and port opposite of where the request was
-    // received on, irrespective of the client sending a change-requset that influenced
-    // the value of socketOutput value above.
-    
-    fSendOtherAddress = HasAddress(RolePP) && HasAddress(RolePA) && HasAddress(RoleAP) && HasAddress(RoleAA);
-
-    if (fSendOtherAddress)
-    {
-        socketOther = SocketRoleSwapIP(SocketRoleSwapPort(_pMsgIn->socketrole));
-        // so if our ip address is "0.0.0.0", disable this attribute
-        fSendOtherAddress = (IsIPAddressZeroOrInvalid(socketOther) == false);
-        
-        // so if the local address of the other socket isn't known (e.g. ip == "0.0.0.0"), disable this attribute
-        if (fSendOtherAddress)
-        {
-            addrOther = _pAddrSet->set[socketOther].addr;
-        }
-    }
-
-    // What's our address origin?
-    addrOrigin = _pAddrSet->set[socketOutput].addr;
-    if (addrOrigin.IsIPAddressZero())
-    {
-        // Since we're sending back from the IP address we received on, we can just use the address the message came in on
-        // Otherwise, we don't actually know it
-        if (socketOutput == _pMsgIn->socketrole)
-        {
-            addrOrigin = _pMsgIn->addrLocal;
-        }
-    }
-    fSendOriginAddress = (false == addrOrigin.IsIPAddressZero());
-
-    // Success - we're all clear to build the response
-    _pMsgOut->socketrole = socketOutput;
-    
-
-    builder.AddHeader(StunMsgTypeBinding, StunMsgClassSuccessResponse);
-    builder.AddTransactionId(_transid);
-    
-    // paranoia - just to be consistent with Vovida, send the attributes back in the same order it does
-    // I suspect there are clients out there that might be hardcoded to the ordering
-    
-    // MAPPED-ADDRESS
-    // SOURCE-ADDRESS (RESPONSE-ORIGIN)
-    // CHANGED-ADDRESS (OTHER-ADDRESS)
-    // XOR-MAPPED-ADDRESS (XOR-MAPPED_ADDRESS-OPTIONAL)
-    
-    builder.AddMappedAddress(_pMsgIn->addrRemote);
-
-    if (fSendOriginAddress)
-    {
-        builder.AddResponseOriginAddress(addrOrigin); // pass true to send back SOURCE_ADDRESS, otherwise, pass false to send back RESPONSE-ORIGIN
-    }
-
-    if (fSendOtherAddress)
-    {
-        builder.AddOtherAddress(addrOther); // pass true to send back CHANGED-ADDRESS, otherwise, pass false to send back OTHER-ADDRESS
-    }
-
-    // send back the XOR-MAPPED-ADDRESS (encoded as an optional message for legacy clients)
-    builder.AddXorMappedAddress(_pMsgIn->addrRemote);
-    
-    
-    // finally - if we're supposed to have a message integrity attribute as a result of authorization, add it at the very end
-    if (_integrity.fSendWithIntegrity)
-    {
-        if (_integrity.fUseLongTerm == false)
-        {
-            builder.AddMessageIntegrityShortTerm(_integrity.szPassword);
-        }
-        else
-        {
-            builder.AddMessageIntegrityLongTerm(_integrity.szUser, _integrity.szRealm, _integrity.szPassword);
-        }
-    }
-
-    builder.FixLengthField();
-
-    return S_OK;
-}
 HRESULT CStunRequestHandler::ProcessBindingRequest()
 {
     CStunMessageReader& reader = *(_pMsgIn->pReader);

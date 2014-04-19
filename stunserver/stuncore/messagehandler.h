@@ -20,6 +20,9 @@
 
 #include "stunauth.h"
 #include "socketrole.h"
+#include "conndatastore.h"
+
+//class  ConnDataStore;
 
 struct StunMessageIn
 {
@@ -69,7 +72,7 @@ struct StunErrorCode
     char szRealm[MAX_STUN_AUTH_STRING_SIZE+1];
 };
 
-class  ConnDataStore;
+
 
 
 class CStunRequestHandler
@@ -79,8 +82,8 @@ public:
 private:
     
     CStunRequestHandler();
-    HRESULT ProcessPrivateMsg(uint16_t messageType, CStunRequestHandler handler);
-    HRESULT CStunRequestHandler::ProcessNATConnectReq();    
+    HRESULT ProcessPrivateMsg(uint16_t messageType);
+    HRESULT ProcessNATConnectReq();
     HRESULT ProcessBindingRequest();
     void BuildErrorResponse();
     HRESULT ValidateAuth();
